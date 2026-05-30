@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agri-Robot Simulation</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        canvas {
+            background-color: #2d3748;
+            border: 2px solid #4a5568;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        .controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #3182ce;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        button:hover { background-color: #2b6cb0; }
+        .legend {
+            margin-top: 15px;
+            display: flex;
+            gap: 20px;
+            font-size: 14px;
+        }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; }
+    </style>
+</head>
+<body>
+
+    <h2>Automated Plant Disease Treatment</h2>
+    
+    <canvas id="simCanvas" width="650" height="700"></canvas>
+    
+    <div class="controls">
+        <button onclick="startSim()">Start / Resume</button>
+        <button onclick="pauseSim()">Pause</button>
+        <button onclick="resetSim()">Reset & Randomize Plants</button>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><div class="dot" style="background: #a0aec0;"></div> Unscanned</div>
+        <div class="legend-item"><div class="dot" style="background: #48bb78;"></div> Healthy (Water)</div>
+        <div class="legend-item"><div class="dot" style="background: #ecc94b;"></div> Disease A (Med A)</div>
+        <div class="legend-item"><div class="dot" style="background: #f56565;"></div> Disease B (Med B)</div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Garden Dimensions
+    const PLANT_SPACING = 25;
+    const ROW_LENGTH = 20; 
+    const START_Y = 600;
+    const END_Y = START_Y - (ROW_LENGTH - 1) * PLANT_SPACING;
+    
+    // Layout: P1, R1, P2, R2, P3, R3, P4, R4, P5, R5, P6
+    const PATHS_X = [50, 150, 250, 350, 450, 550]; // 6 Paths
+    const ROWS_X = [100, 200, 300, 400, 500];      // 5 Rows
+
+    // Robot Pass Logic
+    const PASSES = [
+        { pathX: PATHS_X[1], dir: -1, row: 0, angle: 0 },         // Pass 1: Up Path 2, Left looks at Row 1
+        { pathX: PATHS_X[1], dir: 1,  row: 1, angle: Math.PI },   // Pass 2: Down Path 2, Left looks at Row 2
+        { pathX: PATHS_X[3], dir: -1, row: 2, angle: 0 },         // Pass 3: Up Path 4, Left looks at Row 3
+        { pathX: PATHS_X[3], dir: 1,  row: 3, angle: Math.PI },   // Pass 4: Down Path 4, Left looks at Row 4
+        { pathX: PATHS_X[5], dir: -1, row: 4, angle: 0 }          // Pass 5: Up Path 6, Left looks at Row 5
+    ];
+
+    let plants = [];
+    let particles = [];
+    let isRunning = false;
+
+    let robot = {};
+
+    function initPlants() {
+        plants = [];
+        for (let r = 0; r < 5; r++) {
+            for (let p = 0; p < ROW_LENGTH; p++) {
+                // Random split on every generation (1/3 chance each)
+                let rand = Math.random();
+                let type = rand < 0.33 ? 'HEALTHY' : (rand < 0.66 ? 'DISEASE_A' : 'DISEASE_B');
+                
+                plants.push({
+                    row: r,
+                    y: START_Y - (p * PLANT_SPACING),
+                    x: ROWS_X[r],
+                    type: type,
+                    scanned: false
+                });
+            }
+        }
+    }
+
+    function resetSim() {
+        initPlants(); // Triggers a new random generation of diseases
+        robot = {
+            currentPass: 0,
+            x: PASSES[0].pathX,
+            y: START_Y + 50,
+            width: 20, height: 40,
+            angle: PASSES[0].angle,
+            state: 'MOVING', 
+            sprayTimer: 0,
+            speed: 2
+        };
+        particles = [];
+        isRunning = false;
+        draw();
+    }
+
+    function startSim() { isRunning = true; update(); }
+    function pauseSim() { isRunning = false; }
+
+    function createSpray(robotCenterX, robotCenterY, type, angle) {
+        let color = type === 'HEALTHY' ? '#4299e1' : (type === 'DISEASE_A' ? '#ecc94b' : '#f56565');
+        
+        // Spray animation effect
+        let nozzleX = robotCenterX + Math.cos(angle - Math.PI/2) * 16;
+        let nozzleY = robotCenterY + Math.sin(angle - Math.PI/2) * 16;
+
+        for(let i=0; i<20; i++) {
+            particles.push({
+                x: nozzleX, y: nozzleY, // Spawn from the left nozzle instead of center
+                vx: Math.cos(angle - Math.PI/2 + (Math.random()-0.5)*0.5) * (Math.random()*4 + 2),
+                vy: Math.sin(angle - Math.PI/2 + (Math.random()-0.5)*0.5) * (Math.random()*4 + 2),
+                life: 1.0, color: color
+            });
+        }
+    }
+
+    function update() {
+        if (!isRunning) return;
+
+        if (robot.state === 'MOVING') {
+            let pass = PASSES[robot.currentPass];
+            
+            // Find next unscanned plant in the target row based on direction
+            let targetRowPlants = plants.filter(p => p.row === pass.row && !p.scanned);
+            
+            if (targetRowPlants.length > 0) {
+                // Get the closest plant based on direction of travel
+                let target = pass.dir === -1 ? 
+                    targetRowPlants.reduce((a, b) => a.y > b.y ? a : b) : // Going Up, target largest Y
+                    targetRowPlants.reduce((a, b) => a.y < b.y ? a : b);  // Going Down, target smallest Y
+                
+                // Move towards target Y
+                if (Math.abs(robot.y - target.y) > robot.speed) {
+                    robot.y += pass.dir * robot.speed;
+                } else {
+                    robot.y = target.y; // Align perfectly
+                    target.scanned = true;
+                    robot.state = 'SPRAYING';
+                    robot.sprayTimer = 30; // Spray duration
+                    createSpray(robot.x, robot.y, target.type, robot.angle);
+                }
+            } else {
+                // Row complete, advance to next pass or finish
+                if (robot.currentPass < PASSES.length - 1) {
+                    robot.state = 'TURNING';
+                } else {
+                    robot.state = 'FINISHED';
+                }
+            }
+        } 
+        else if (robot.state === 'SPRAYING') {
+            robot.sprayTimer--;
+            if (robot.sprayTimer <= 0) {
+                robot.state = 'MOVING';
+            }
+        }
+        else if (robot.state === 'TURNING') {
+            let currentPass = PASSES[robot.currentPass];
+            let nextPass = PASSES[robot.currentPass + 1];
+            
+            // Move completely out of the row to turn
+            let boundaryY = currentPass.dir === -1 ? END_Y - 60 : START_Y + 60;
+            
+            if (currentPass.dir === -1 && robot.y > boundaryY) robot.y -= robot.speed;
+            else if (currentPass.dir === 1 && robot.y < boundaryY) robot.y += robot.speed;
+            else {
+                // Move X if changing paths
+                if (Math.abs(robot.x - nextPass.pathX) > robot.speed) {
+                    robot.x += robot.speed;
+                    robot.angle += 0.08; // Visual spinning effect
+                } else {
+                    robot.x = nextPass.pathX;
+                    robot.angle = nextPass.angle;
+                    robot.currentPass++;
+                    robot.state = 'MOVING';
+                }
+            }
+        }
+
+        // Update Spray Particles
+        particles.forEach(p => {
+            p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+        });
+        particles = particles.filter(p => p.life > 0);
+
+        draw();
+        requestAnimationFrame(update);
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Environment Background
+        ctx.fillStyle = '#2d3748';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw 6 Paths
+        ctx.fillStyle = '#4a5568';
+        PATHS_X.forEach((px, index) => {
+            ctx.fillRect(px - 20, 50, 40, 600);
+            ctx.fillStyle = '#a0aec0';
+            ctx.fillText("P" + (index + 1), px - 7, 40); // Path Labels
+            ctx.fillStyle = '#4a5568';
+        });
+
+        // Draw Plants (5 Rows)
+        plants.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+            if (!p.scanned) {
+                ctx.fillStyle = '#a0aec0'; // Unscanned
+            } else {
+                if (p.type === 'HEALTHY') ctx.fillStyle = '#48bb78';
+                else if (p.type === 'DISEASE_A') ctx.fillStyle = '#ecc94b';
+                else ctx.fillStyle = '#f56565';
+            }
+            ctx.fill();
+        });
+
+        // Draw Particles
+        particles.forEach(p => {
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+            ctx.fill();
+        });
+        ctx.globalAlpha = 1.0;
+
+        // Draw Robot
+        if (robot.state !== 'FINISHED' && Object.keys(robot).length > 0) {
+            ctx.save();
+            ctx.translate(robot.x, robot.y);
+            ctx.rotate(robot.angle);
+            
+            // Body
+            ctx.fillStyle = '#edf2f7';
+            ctx.fillRect(-robot.width/2, -robot.height/2, robot.width, robot.height);
+            
+            // Front indicator
+            ctx.fillStyle = '#3182ce';
+            ctx.fillRect(-robot.width/2, -robot.height/2, robot.width, 10);
+
+            // Left Side Camera/Pump array (Always on the left)
+            ctx.fillStyle = '#dd6b20';
+            ctx.fillRect(-robot.width/2 - 6, -6, 6, 12);
+
+            ctx.restore();
+        }
+    }
+
+    resetSim(); // Initialize on load
+</script>
+</body>
+</html>
