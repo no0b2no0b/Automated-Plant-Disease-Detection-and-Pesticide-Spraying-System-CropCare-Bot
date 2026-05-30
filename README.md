@@ -31,8 +31,8 @@ Mobile Robot Platform
 - Suitable for agricultural field navigation.
 
   WebPage :
-  <img width="755" height="1600" alt="1" src="https://github.com/user-attachments/assets/4863e12d-05d7-47a3-88be-ed0e1ba79119" />
-<img width="763" height="1600" alt="2" src="https://github.com/user-attachments/assets/a040073b-fd8d-4d63-94a3-ddac3ec2a416" />
+  <img width="450" height="900" alt="1" src="https://github.com/user-attachments/assets/4863e12d-05d7-47a3-88be-ed0e1ba79119" />
+<img width="450" height="900" alt="2" src="https://github.com/user-attachments/assets/a040073b-fd8d-4d63-94a3-ddac3ec2a416" />
 
 
 
